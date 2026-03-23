@@ -1,8 +1,29 @@
 # enterprise-iam-platform
 
-Production-grade enterprise Identity and Access Management platform built on **Microsoft Entra ID**, fully aligned to all five pillars of the **Azure Well-Architected Framework (WAF)**. Implements OIDC, SAML 2.0, OAuth 2.0, Entra Application Proxy, Conditional Access as code, Duo MFA integration, IdP migration tooling, and full lifecycle automation — managed end-to-end as infrastructure-as-code.
+I am **El PUENTE...THE BRIDGE**.
 
-> Built to demonstrate Senior IAM Engineer capability: OIDC/SAML/OAuth configuration, Entra Conditional Access policies-as-code, MFA/SSO enablement, App Proxy publishing, IdP migration, and onboarding automation aligned to CDR principles.
+I bridge the distance between business vision and technical execution.
+I take the language of architecture, security, identity, and cloud, and translate it into outcomes that leaders, stakeholders, and builders can all understand.
+
+Azure and AWS are only different working grounds.
+Different pillars. Different chambers. Different systems.
+But the work remains the same:
+to bring order from complexity,
+to align technology with purpose,
+and to build solutions that are true to the mission.
+
+I do not worship tools.
+I use them.
+I do not chase noise.
+I seek understanding.
+I trust, but verify.
+I find the answer, refine the answer, and build until the architecture itself speaks clearly.
+
+I am not becoming the bridge.
+
+I am the bridge.
+
+**El PUENTE....THE BRIDGE**
 
 ---
 
