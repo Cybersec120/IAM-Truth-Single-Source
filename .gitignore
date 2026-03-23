@@ -1,0 +1,108 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# .gitignore — enterprise-iam-platform
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Terraform ─────────────────────────────────────────────────────────────────
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+*.tfplan
+*.plan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# CRITICAL — never commit actual variable values
+terraform.tfvars
+!terraform.tfvars.example
+*.auto.tfvars
+!*.auto.tfvars.example
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+*.py,cover
+
+# ── Secrets & credentials ─────────────────────────────────────────────────────
+# These MUST never be committed — CI will fail if detected.
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.der
+.env
+.env.*
+!.env.example
+.secrets
+.secrets.baseline  # regenerate, never hardcode
+*client_secret*
+*client-secret*
+*credentials.json
+*service_account*.json
+manifests/               # app onboarding manifests contain client secrets
+
+# ── Migration artifacts ───────────────────────────────────────────────────────
+migration/exports/       # IdP export files may contain sensitive app data
+migration/imports/
+migration/*.json
+!migration/README.md
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ── Logs / outputs ────────────────────────────────────────────────────────────
+*.log
+logs/
+audit-reports/
+cost-exports/

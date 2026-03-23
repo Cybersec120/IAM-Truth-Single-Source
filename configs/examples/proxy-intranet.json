@@ -1,0 +1,16 @@
+{
+  "display_name": "Corporate Intranet (Legacy)",
+  "description": "On-premises SharePoint intranet published via Entra Application Proxy — no inbound firewall rules required.",
+  "internal_url": "http://intranet.corp.contoso.local/",
+  "external_url_prefix": "intranet",
+  "pre_authentication_method": "aadPreAuthentication",
+  "connector_group_name": "on-prem-dc",
+  "assign_groups": [],
+
+  "_notes": {
+    "pre_authentication_method": "aadPreAuthentication enforces Entra auth before the request reaches the on-prem server. Use 'passthrough' only for apps that cannot handle redirects.",
+    "connector_group_name": "Connector group must already exist in Entra and have at least one healthy connector agent installed on an on-prem Windows Server.",
+    "internal_url": "Must be reachable from the Windows Server running the connector agent.",
+    "external_url": "Auto-generated as https://{external_url_prefix}-{tenantId-short}.msappproxy.net/"
+  }
+}

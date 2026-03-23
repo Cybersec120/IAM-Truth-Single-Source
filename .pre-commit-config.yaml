@@ -1,0 +1,62 @@
+repos:
+  # ── Secrets detection — CRITICAL for IAM project ─────────────────────────
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: package.lock.json
+
+  # ── Terraform ─────────────────────────────────────────────────────────────
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.88.0
+    hooks:
+      - id: terraform_fmt
+      - id: terraform_validate
+        args:
+          - --args=-no-color
+      - id: terraform_tflint
+        args:
+          - --args=--only=terraform_deprecated_interpolation
+          - --args=--only=terraform_deprecated_index
+          - --args=--only=terraform_unused_declarations
+          - --args=--only=terraform_comment_syntax
+          - --args=--only=terraform_documented_outputs
+          - --args=--only=terraform_documented_variables
+          - --args=--only=terraform_typed_variables
+          - --args=--only=terraform_naming_convention
+      - id: terraform_checkov
+        args:
+          - --args=--quiet
+          - --args=--soft-fail
+
+  # ── Python ────────────────────────────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.3.5
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.8
+    hooks:
+      - id: bandit
+        args: ['-ll', '-ii']
+        files: scripts/
+        exclude: scripts/tests/
+
+  # ── General ───────────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: ['--branch', 'main']

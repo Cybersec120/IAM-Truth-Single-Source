@@ -1,0 +1,12 @@
+{
+  "display_name": "HR Self-Service Portal",
+  "description": "Employee HR portal — OIDC authorization code + PKCE",
+  "redirect_uris": [
+    "https://hr.contoso.com/auth/callback",
+    "https://hr-staging.contoso.com/auth/callback"
+  ],
+  "logout_uri": "https://hr.contoso.com/auth/logout",
+  "api_permissions": ["User.Read", "openid", "email", "profile", "offline_access"],
+  "assign_groups": [],
+  "owners": []
+}

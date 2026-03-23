@@ -1,0 +1,37 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# requirements.txt — enterprise-iam-platform
+# Python 3.12+   |   pip install -r requirements.txt
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Azure SDK ─────────────────────────────────────────────────────────────────
+azure-identity>=1.15.0           # ClientSecretCredential, ManagedIdentityCredential
+azure-mgmt-resource>=23.0.0      # Resource group management
+azure-mgmt-keyvault>=10.3.0      # Key Vault management plane
+azure-keyvault-secrets>=4.7.0    # Key Vault secrets data plane
+azure-mgmt-monitor>=6.0.0        # Azure Monitor (alert rules, action groups)
+azure-mgmt-costmanagement>=4.0.0 # Budget + cost management
+msgraph-sdk>=1.3.0               # Microsoft Graph SDK (supplementary to REST calls)
+
+# ── HTTP ──────────────────────────────────────────────────────────────────────
+requests>=2.31.0                 # Microsoft Graph API REST calls
+urllib3>=2.0.7                   # HTTP connection pooling (pin for CVE-2023-43804)
+
+# ── IdP SDK (migration toolkit) ───────────────────────────────────────────────
+okta>=2.9.6                      # idp_migration.py: Okta source IdP export
+
+# ── Data / validation ─────────────────────────────────────────────────────────
+pydantic>=2.5.0                  # Config schema validation (migration toolkit)
+python-dateutil>=2.8.2           # Date arithmetic (secret expiry, lifecycle)
+
+# ── Output / reporting ────────────────────────────────────────────────────────
+tabulate>=0.9.0                  # mfa_audit.py tabular console output
+rich>=13.7.0                     # Progress bars + coloured terminal output
+jinja2>=3.1.3                    # HTML report generation (audit reports)
+
+# ── CI / dev tooling — install separately in pipelines ───────────────────────
+# ruff>=0.3.0          — linting + import order (ruff check scripts/)
+# mypy>=1.9.0          — static type checking   (mypy scripts/ --strict)
+# bandit>=1.7.8        — security scan          (bandit -r scripts/ -ll)
+# detect-secrets>=1.4.0 — pre-commit secrets    (detect-secrets scan)
+# pytest>=8.1.0        — unit tests             (pytest scripts/tests/)
+# pytest-mock>=3.12.0  — mock fixtures          (mocking Graph API in tests)

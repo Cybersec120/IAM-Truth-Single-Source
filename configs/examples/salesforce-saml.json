@@ -1,0 +1,14 @@
+{
+  "display_name": "Salesforce CRM",
+  "description": "Salesforce CRM — SAML 2.0 SSO",
+  "identifier_uris": ["https://contoso.my.salesforce.com"],
+  "reply_urls": ["https://contoso.my.salesforce.com/"],
+  "attribute_mapping": {
+    "email":      "user.mail",
+    "givenname":  "user.givenname",
+    "surname":    "user.surname",
+    "employeeid": "user.employeeid",
+    "department": "user.department"
+  },
+  "assign_groups": []
+}

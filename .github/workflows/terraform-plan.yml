@@ -1,0 +1,164 @@
+name: Terraform Plan — PR Validation
+
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-plan.yml"
+
+permissions:
+  contents: read
+  pull-requests: write   # Post plan output as PR comment
+  id-token: write        # OIDC workload identity — no stored secrets (WAF: Security)
+
+env:
+  TF_VERSION: "1.7.4"
+  ARM_USE_OIDC: "true"
+  WORKING_DIR: terraform/entra-id
+
+jobs:
+  # ── Lint and security scan ────────────────────────────────────────────────
+  lint:
+    name: Lint and security scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform fmt check
+        working-directory: ${{ env.WORKING_DIR }}
+        run: terraform fmt -check -recursive
+        # WAF: Operational Excellence — consistent code formatting enforced on every PR
+
+      - name: Install tflint
+        run: |
+          curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+
+      - name: Run tflint
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          tflint --init
+          tflint --format compact
+
+      - name: Install tfsec
+        run: |
+          curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+
+      - name: Run tfsec security scan
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          tfsec . --format json --out tfsec-results.json || true
+          tfsec . --format lovely
+        # WAF: Security — static security analysis on every PR
+
+      - name: Upload tfsec results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tfsec-results
+          path: ${{ env.WORKING_DIR }}/tfsec-results.json
+
+  # ── Terraform plan ────────────────────────────────────────────────────────
+  plan:
+    name: Terraform plan
+    runs-on: ubuntu-latest
+    needs: lint
+    environment: staging   # Environment protection rules gate this job
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # OIDC workload identity — authenticates without stored credentials
+      # WAF: Security — zero long-lived secrets in GitHub Actions
+      - name: Azure OIDC login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Export OIDC token for Terraform
+        run: |
+          echo "ARM_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}"       >> "$GITHUB_ENV"
+          echo "ARM_CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}"       >> "$GITHUB_ENV"
+          echo "ARM_SUBSCRIPTION_ID=${{ secrets.AZURE_SUBSCRIPTION_ID }}" >> "$GITHUB_ENV"
+
+      - name: terraform init
+        working-directory: ${{ env.WORKING_DIR }}
+        run: terraform init -input=false
+
+      - name: terraform validate
+        working-directory: ${{ env.WORKING_DIR }}
+        run: terraform validate
+
+      - name: terraform plan
+        id: plan
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terraform plan \
+            -var="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -var="alert_email=${{ secrets.IAM_ALERT_EMAIL }}" \
+            -var="ca_policy_state=enabledForReportingButNotEnforced" \
+            -input=false \
+            -out=tfplan \
+            -no-color 2>&1 | tee plan-output.txt
+          echo "exitcode=$?" >> $GITHUB_OUTPUT
+
+      - name: Post plan to PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('${{ env.WORKING_DIR }}/plan-output.txt', 'utf8');
+            const truncated = plan.length > 60000 ? plan.slice(-60000) + '\n\n[Output truncated]' : plan;
+            const body = `## Terraform Plan\n\`\`\`hcl\n${truncated}\n\`\`\``;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ env.WORKING_DIR }}/tfplan
+          retention-days: 5
+
+  # ── Python script validation ──────────────────────────────────────────────
+  python-tests:
+    name: Python script tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run linting
+        run: |
+          pip install ruff mypy
+          ruff check scripts/
+          mypy scripts/ --ignore-missing-imports
+
+      - name: Run unit tests
+        run: |
+          pip install pytest
+          pytest tests/ -v --tb=short

@@ -1,0 +1,171 @@
+name: Terraform Apply — Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+
+  # Allow manual apply with environment override
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [staging, prod]
+        default: prod
+      ca_policy_state:
+        description: "Conditional access policy state"
+        required: false
+        type: choice
+        options:
+          - enabled
+          - enabledForReportingButNotEnforced
+          - disabled
+        default: enabled
+
+permissions:
+  contents: read
+  id-token: write    # OIDC — WAF: Security, no stored credentials
+
+env:
+  TF_VERSION:  "1.7.4"
+  ARM_USE_OIDC: "true"
+  WORKING_DIR:  terraform/entra-id
+
+jobs:
+  apply:
+    name: Terraform apply — ${{ inputs.environment || 'prod' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'prod' }}
+    # WAF: Operational Excellence — environment protection requires manual approval for prod
+
+    concurrency:
+      group: terraform-apply-${{ inputs.environment || 'prod' }}
+      cancel-in-progress: false  # Never cancel an in-flight apply
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # OIDC workload identity login — WAF: Security
+      - name: Azure OIDC login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Export OIDC credentials
+        run: |
+          echo "ARM_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}"                >> "$GITHUB_ENV"
+          echo "ARM_CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}"                >> "$GITHUB_ENV"
+          echo "ARM_SUBSCRIPTION_ID=${{ secrets.AZURE_SUBSCRIPTION_ID }}"   >> "$GITHUB_ENV"
+
+      - name: Determine CA policy state
+        id: ca_state
+        run: |
+          # Explicit input takes priority; otherwise prod=enabled, else report-only
+          if [ -n "${{ inputs.ca_policy_state }}" ]; then
+            echo "state=${{ inputs.ca_policy_state }}" >> $GITHUB_OUTPUT
+          elif [ "${{ inputs.environment || 'prod' }}" = "prod" ]; then
+            echo "state=enabled" >> $GITHUB_OUTPUT
+          else
+            echo "state=enabledForReportingButNotEnforced" >> $GITHUB_OUTPUT
+          fi
+
+      - name: terraform init
+        working-directory: ${{ env.WORKING_DIR }}
+        run: terraform init -input=false
+
+      - name: terraform plan (pre-apply verification)
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terraform plan \
+            -var="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -var="alert_email=${{ secrets.IAM_ALERT_EMAIL }}" \
+            -var="ca_policy_state=${{ steps.ca_state.outputs.state }}" \
+            -var="environment=${{ inputs.environment || 'prod' }}" \
+            -input=false \
+            -out=tfplan
+
+      - name: terraform apply
+        working-directory: ${{ env.WORKING_DIR }}
+        run: terraform apply -auto-approve -input=false tfplan
+
+      - name: Capture outputs
+        id: outputs
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terraform output -json > tf-outputs.json
+          echo "CA policy IDs:"
+          terraform output -json ca_policy_ids | jq .
+          echo "OIDC client IDs:"
+          terraform output -json oidc_client_ids | jq .
+
+      - name: Upload outputs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-${{ github.sha }}
+          path: ${{ env.WORKING_DIR }}/tf-outputs.json
+          retention-days: 30
+
+      - name: Post deployment summary
+        if: always()
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.environment || 'prod' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CA Policy State | ${{ steps.ca_state.outputs.state }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tenant | ${{ secrets.AZURE_TENANT_ID }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Applied by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ── Post-deploy: trigger MFA audit ───────────────────────────────────────
+  post_deploy_audit:
+    name: Post-deploy MFA audit
+    runs-on: ubuntu-latest
+    needs: apply
+    if: success()
+    # WAF: Reliability — automatically verify MFA coverage after every deployment
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Azure OIDC login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run post-deploy MFA audit (summary only)
+        env:
+          AZURE_TENANT_ID:     ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID:     ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          python scripts/audit/mfa_audit.py audit \
+            --output-dir reports/ \
+            --format json
+
+      - name: Upload MFA audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: mfa-audit-post-deploy
+          path: reports/
+          retention-days: 90

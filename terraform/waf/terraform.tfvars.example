@@ -1,0 +1,50 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# terraform.tfvars.example — enterprise-iam-platform / waf
+#
+# Copy to terraform.tfvars and fill in your values before applying.
+# NEVER commit terraform.tfvars — it is in .gitignore.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Required ──────────────────────────────────────────────────────────────────
+tenant_id       = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+environment     = "prod"
+organization    = "contoso"
+
+# ── Regions ───────────────────────────────────────────────────────────────────
+location           = "eastus2"
+location_secondary = "centralus"
+
+# ── Reliability ───────────────────────────────────────────────────────────────
+enable_availability_zones    = true
+backup_retention_days        = 90       # 7–90; use 90 for prod
+log_retention_days           = 365      # 30–730; 365 = 1-year default
+
+# ── Security ──────────────────────────────────────────────────────────────────
+key_vault_sku = "premium"               # "premium" for HSM-backed keys; "standard" for dev
+
+# IP ranges allowed to reach Key Vault management plane
+allowed_ip_ranges = [
+  "203.0.113.0/24",   # Corporate HQ egress
+  "198.51.100.1/32",  # VPN concentrator
+]
+
+security_contact_email = "security@contoso.com"
+security_contact_phone = "+15555550100"
+
+# ── Cost Optimization ─────────────────────────────────────────────────────────
+budget_amount_usd       = 500
+budget_alert_thresholds = [75, 90, 100]
+budget_alert_email      = "cloud-costs@contoso.com"
+
+# ── Operational Excellence ────────────────────────────────────────────────────
+alert_action_group_email   = "iam-oncall@contoso.com"
+
+# Optional: webhook URL for Slack / PagerDuty alert routing
+# alert_action_group_webhook = "https://hooks.slack.com/services/T.../B.../..."
+
+enable_diagnostic_settings = true
+
+# ── Performance Efficiency ────────────────────────────────────────────────────
+log_analytics_sku             = "PerGB2018"   # Switch to CapacityReservation at >100GB/day
+key_vault_soft_delete_enabled = true

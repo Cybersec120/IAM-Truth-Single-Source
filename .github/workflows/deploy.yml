@@ -1,0 +1,352 @@
+name: enterprise-iam-platform
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - "scripts/**"
+      - ".github/workflows/deploy.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - "scripts/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "staging"
+        type: choice
+        options: [dev, staging, prod]
+      action:
+        description: "Terraform action"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply, destroy]
+
+# Prevent concurrent deployments to the same environment
+concurrency:
+  group: iam-platform-${{ github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: "1.7.0"
+  PYTHON_VERSION: "3.12"
+  TF_WORKING_DIR: "./terraform/entra-id"
+  # Azure WAF: Operational Excellence — all environment config via OIDC,
+  # no long-lived secrets stored in GitHub.
+
+permissions:
+  id-token: write    # Required for OIDC federation with Azure
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+
+  # ── Python code quality ─────────────────────────────────────────────────────
+
+  lint-and-test:
+    name: Python lint + unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install ruff mypy pytest pytest-cov \
+            azure-identity requests msal
+
+      - name: Lint (ruff)
+        run: ruff check scripts/ --output-format=github
+
+      - name: Type check (mypy)
+        run: mypy scripts/ --ignore-missing-imports --no-strict-optional
+
+      - name: Unit tests
+        run: |
+          pytest scripts/ -v --tb=short \
+            --cov=scripts \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            -m "not integration"
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: coverage.xml
+          fail_ci_if_error: false
+
+  # ── Security scanning ───────────────────────────────────────────────────────
+
+  security-scan:
+    name: Security scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install bandit
+        run: pip install bandit[toml]
+
+      - name: Bandit SAST scan
+        run: |
+          bandit -r scripts/ \
+            --severity-level medium \
+            --format sarif \
+            --output bandit-results.sarif
+        continue-on-error: true
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit-results.sarif
+
+      - name: Checkov IaC scan (Terraform)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ env.TF_WORKING_DIR }}
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          soft_fail: true
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-results.sarif
+
+  # ── Terraform validate ──────────────────────────────────────────────────────
+
+  tf-validate:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    needs: [lint-and-test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform fmt check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init (no backend)
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -backend=false
+
+      - name: Terraform validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+      - name: tfsec scan
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: ${{ env.TF_WORKING_DIR }}
+          github_token: ${{ github.token }}
+          soft_fail: true
+
+  # ── Terraform plan ──────────────────────────────────────────────────────────
+
+  tf-plan:
+    name: Terraform plan — ${{ github.event.inputs.environment || 'staging' }}
+    runs-on: ubuntu-latest
+    needs: [tf-validate, security-scan]
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+
+    outputs:
+      plan_exitcode: ${{ steps.plan.outputs.exitcode }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # OIDC authentication — no client secret stored in GitHub
+      # Azure WAF: Security — workload identity federation replaces long-lived secrets
+      - name: Azure OIDC login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC:        "true"
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RG }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_SA }}" \
+            -backend-config="container_name=iam-platform" \
+            -backend-config="key=${{ github.event.inputs.environment || 'staging' }}/terraform.tfstate"
+
+      - name: Terraform plan
+        id: plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC:        "true"
+          TF_VAR_tenant_id:    ${{ secrets.AZURE_TENANT_ID }}
+          TF_VAR_environment:  ${{ github.event.inputs.environment || 'staging' }}
+        run: |
+          terraform plan \
+            -var-file="envs/${{ github.event.inputs.environment || 'staging' }}.tfvars" \
+            -out=tfplan \
+            -detailed-exitcode
+        continue-on-error: true
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.event.inputs.environment || 'staging' }}
+          path: ${{ env.TF_WORKING_DIR }}/tfplan
+          retention-days: 5
+
+      - name: Post plan to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          PLAN: ${{ steps.plan.outputs.stdout }}
+        with:
+          script: |
+            const output = `#### Terraform Plan — \`${{ github.event.inputs.environment || 'staging' }}\`
+            \`\`\`terraform
+            ${process.env.PLAN || 'No changes detected'}
+            \`\`\`
+            *Triggered by: @${{ github.actor }}, Action: ${{ github.event_name }}*`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  # ── Terraform apply (prod requires manual approval) ─────────────────────────
+
+  tf-apply:
+    name: Terraform apply — ${{ github.event.inputs.environment || 'staging' }}
+    runs-on: ubuntu-latest
+    needs: [tf-plan]
+    if: |
+      (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') &&
+      github.event.inputs.action == 'apply' &&
+      needs.tf-plan.outputs.plan_exitcode == '2'
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure OIDC login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ github.event.inputs.environment || 'staging' }}
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC:        "true"
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RG }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_SA }}" \
+            -backend-config="container_name=iam-platform" \
+            -backend-config="key=${{ github.event.inputs.environment || 'staging' }}/terraform.tfstate"
+
+      - name: Terraform apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC:        "true"
+        run: terraform apply -auto-approve tfplan
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "IAM platform deployed to ${{ github.event.inputs.environment }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Actor: ${{ github.actor }}"
+
+  # ── Weekly MFA compliance audit ─────────────────────────────────────────────
+
+  mfa-audit:
+    name: Weekly MFA compliance audit
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install script dependencies
+        run: pip install azure-identity requests msal
+
+      - name: Azure OIDC login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run MFA audit
+        env:
+          AZURE_TENANT_ID:     ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID:     ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          mkdir -p reports
+          python scripts/audit/mfa_audit.py audit \
+            --output-dir reports/ \
+            --format all
+
+      - name: Upload audit reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: mfa-audit-${{ github.run_id }}
+          path: reports/
+          retention-days: 90

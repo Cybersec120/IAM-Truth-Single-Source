@@ -1,0 +1,12 @@
+{
+  "userPrincipalName": "jsmith@contoso.com",
+  "displayName":       "Jane Smith",
+  "givenName":         "Jane",
+  "surname":           "Smith",
+  "mailNickname":      "jsmith",
+  "jobTitle":          "Security Engineer",
+  "department":        "Information Security",
+  "usageLocation":     "US",
+  "groupIds": [],
+  "_note": "groupIds should be object IDs of Entra groups from Terraform outputs.group_object_ids"
+}

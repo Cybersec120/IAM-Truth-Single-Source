@@ -1,0 +1,154 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# terraform.tfvars.example — enterprise-iam-platform
+#
+# Copy to terraform.tfvars and populate before applying.
+# NEVER commit terraform.tfvars to source control — add it to .gitignore.
+# Use environment variables or a secrets manager for sensitive values.
+#
+# Azure WAF: Operational Excellence — explicit variable documentation
+#            reduces operator error during apply.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Core identity ─────────────────────────────────────────────────────────────
+
+tenant_id    = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"   # Your Entra tenant GUID
+environment  = "prod"                                    # dev | staging | prod
+organization = "contoso"                                 # Used in resource naming
+location     = "eastus"                                  # Azure region for supporting resources
+
+# ── Licensing ─────────────────────────────────────────────────────────────────
+# Set entra_p2_features_enabled = false for Entra ID P1 tenants.
+# P2 features: Identity Protection risk policies, PIM, Access Reviews.
+
+entra_p2_features_enabled = true
+pim_enabled               = true
+
+# ── Conditional Access ────────────────────────────────────────────────────────
+# Start with "enabledForReportingButNotEnforced" for 2 weeks, monitor
+# sign-in logs, then change to "enabled" for production enforcement.
+
+ca_policy_state = "enabledForReportingButNotEnforced"  # Change to "enabled" after testing
+
+# Break-glass accounts excluded from all CA policies (use object IDs, not UPNs)
+mfa_excluded_user_ids  = []
+mfa_excluded_group_ids = []
+
+# Corporate network exit ranges — sign-ins from these are not blocked by CA006
+trusted_named_locations = {
+  "corporate-hq"  = ["203.0.113.0/24"]
+  "vpn-egress"    = ["198.51.100.0/24"]
+  "branch-office" = ["192.0.2.0/24"]
+}
+
+# ISO 3166-1 alpha-2 country codes to block in CA006 (comment out to disable)
+blocked_country_codes = ["KP", "IR", "RU", "BY"]
+
+# ── OIDC Applications ─────────────────────────────────────────────────────────
+
+oidc_apps = {
+  "hr-portal" = {
+    display_name  = "HR Self-Service Portal"
+    redirect_uris = ["https://hr.contoso.com/auth/callback"]
+    logout_uri    = "https://hr.contoso.com/auth/logout"
+    description   = "Employee HR self-service — OIDC/OpenID Connect"
+    api_permissions = ["User.Read", "profile", "email", "offline_access"]
+  }
+  "expense-app" = {
+    display_name  = "Expense Management"
+    redirect_uris = ["https://expenses.contoso.com/signin-oidc"]
+    logout_uri    = "https://expenses.contoso.com/signout-oidc"
+    description   = "Concur expense submission — OIDC"
+  }
+  "devops-portal" = {
+    display_name  = "Internal DevOps Portal"
+    redirect_uris = [
+      "https://devops.contoso.com/auth/callback",
+      "http://localhost:8080/auth/callback",  # Dev environment
+    ]
+    description = "Internal tooling — OIDC"
+  }
+}
+
+# ── SAML Applications ─────────────────────────────────────────────────────────
+
+saml_apps = {
+  "salesforce" = {
+    display_name    = "Salesforce CRM"
+    identifier_uris = ["https://contoso.my.salesforce.com"]
+    reply_urls      = ["https://contoso.my.salesforce.com/"]
+    description     = "Salesforce CRM — SAML 2.0 SSO"
+    attribute_mapping = {
+      "email"      = "user.mail"
+      "givenname"  = "user.givenname"
+      "surname"    = "user.surname"
+      "employeeid" = "user.employeeid"
+    }
+  }
+  "workday" = {
+    display_name    = "Workday HCM"
+    identifier_uris = ["http://www.workday.com"]
+    reply_urls      = ["https://wd3.myworkday.com/contoso/login-saml.htmld"]
+    description     = "Workday HCM — SAML 2.0 SSO"
+  }
+}
+
+# ── App Proxy ─────────────────────────────────────────────────────────────────
+# Pre-requisite: App Proxy connector installed and registered in Entra portal.
+
+app_proxy_apps = {
+  "legacy-intranet" = {
+    display_name         = "Corporate Intranet (Legacy)"
+    internal_url         = "http://intranet.corp.contoso.local/"
+    external_url_prefix  = "intranet"
+    connector_group_name = "on-prem-dc"
+  }
+  "finance-system" = {
+    display_name         = "Finance ERP (On-Premises)"
+    internal_url         = "https://erp.corp.contoso.local/"
+    external_url_prefix  = "finance-erp"
+    connector_group_name = "on-prem-dc"
+  }
+}
+
+# ── Security Groups ───────────────────────────────────────────────────────────
+
+iam_groups = {
+  "iam-admins" = {
+    display_name       = "IAM Platform Administrators"
+    description        = "Full IAM platform admin — break-glass + IAM engineers"
+    assignable_to_role = true
+  }
+  "mfa-excluded" = {
+    display_name = "MFA Policy Exclusions"
+    description  = "Break-glass and approved service accounts — exclude from MFA CA policy"
+  }
+  "ca-privileged-users" = {
+    display_name = "Privileged Users — Strict CA Scope"
+    description  = "Admins subject to CA003 — compliant device + phishing-resistant MFA required"
+  }
+  "all-workforce" = {
+    display_name = "All Workforce"
+    description  = "All employees and contractors — baseline MFA policy scope"
+  }
+  "contractor-accounts" = {
+    display_name = "Contractor Accounts"
+    description  = "External contractors — time-limited access, guest CA policies apply"
+  }
+}
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+
+log_retention_days        = 90          # Days to retain Log Analytics data
+alert_action_group_email  = "iam-security-alerts@contoso.com"
+
+# ── Token lifetime ────────────────────────────────────────────────────────────
+# Shorter access tokens reduce exposure window.
+# Default Entra access token lifetime = 1 hour.
+
+access_token_lifetime_minutes    = 60    # Access token validity (minutes)
+refresh_token_max_inactive_days  = 90    # Refresh token max inactive period (days)
+
+# ── Cost allocation ───────────────────────────────────────────────────────────
+
+cost_center = "IT-SECURITY-IAM-001"
+owner_team  = "iam-engineering"

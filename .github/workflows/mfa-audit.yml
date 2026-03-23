@@ -1,0 +1,83 @@
+name: Weekly MFA Compliance Audit
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # Every Monday 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      format:
+        description: "Output format"
+        type: choice
+        options: [all, json, csv, html]
+        default: all
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  mfa-audit:
+    name: MFA coverage audit
+    runs-on: ubuntu-latest
+    environment: prod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Azure OIDC login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run MFA audit
+        env:
+          AZURE_TENANT_ID:     ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID:     ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          DUO_IKEY:            ${{ secrets.DUO_IKEY }}
+          DUO_SKEY:            ${{ secrets.DUO_SKEY }}
+          DUO_HOST:            ${{ secrets.DUO_HOST }}
+        run: |
+          python scripts/audit/mfa_audit.py audit \
+            --output-dir reports/ \
+            --format ${{ inputs.format || 'all' }}
+
+      - name: Generate remediation plan
+        env:
+          AZURE_TENANT_ID:     ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID:     ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          latest=$(ls reports/mfa-audit-*.json | sort | tail -1)
+          python scripts/audit/mfa_audit.py remediation-plan \
+            --input "$latest" \
+            --output reports/remediation-plan.json
+
+      - name: Post summary to workflow
+        run: |
+          latest=$(ls reports/mfa-audit-*.json | sort | tail -1)
+          coverage=$(jq '.summary.mfa_coverage_pct' "$latest")
+          no_mfa=$(jq '.summary.users_with_no_mfa' "$latest")
+          phishable=$(jq '.summary.users_with_phishable_mfa' "$latest")
+          echo "## Weekly MFA Audit Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| MFA Coverage | ${coverage}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| No MFA (Critical) | ${no_mfa} users |" >> $GITHUB_STEP_SUMMARY
+          echo "| Phishable MFA only | ${phishable} users |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload audit reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: mfa-audit-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
