@@ -137,7 +137,7 @@ This platform fixes that by putting everything behind one organized identity sys
 
 ---
 
-## Explain it like you're 14
+## Simple Explanation For Real People:
 
 Imagine a school with:
 
