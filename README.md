@@ -346,8 +346,9 @@ That is the work.
 
 To take what is hidden in complexity and bring it into order.
 To square the stone.
-To build what serves.
 To make the system true.
+To Be the builder and complete the Temple ∴
+SO MOTE IT BE ∴
 
 ---
 
